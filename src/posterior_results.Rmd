@@ -1,0 +1,105 @@
+---
+title: "Run Model & Generate Plots"
+author: "Cindy Chen, cjc2279"
+date: '2022-11-02'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rstanarm)
+library(ggplot2)
+library(brms)
+library(bayesplot)
+options(mc.cores = parallel::detectCores())
+```
+
+## Test out different priors
+
+```{r bail}
+brm_test <- brm(bail_amt ~ general_age + Race + Gender + Ethnicity + mo(Top_Charge_Arraign_Ordinal) + estimated_income + Representation_PubPriv + prior_vfo_cnt + prior_nonvfo_cnt + prior_misd_cnt + after_july_2020 + after_july_2020:Race +
+      (1 + Race + Ethnicity + after_july_2020 + after_july_2020:Race | Judge_Name),
+    data = merged_data,
+    family = gaussian,
+    prior = c(prior(normal(log(20000), log(10000)), class = 'Intercept'),
+              prior(normal(log(5000), log(3000)), class = 'b')),
+    seed = 12042022,
+    control = list(adapt_delta = 0.93),
+    chains = 4,
+    iter = 10000
+    )
+
+```
+
+
+### Generate all judge-specific coefficients and save them in a separate file
+```{r}
+judge_coef <- coef(brm_test)
+write.csv(judge_coef, "judge_coef.csv")
+```
+
+### Plot conditional effects of Estimated Income and Race
+```{r}
+plot(conditional_effects(brm_test, effects = "estimated_income:Race"))
+```
+
+### Plot conditional effects of Estimated Income and Charge Severity
+```{r}
+# can only do this with ordinal variables... not for continuous!
+plot(conditional_effects(brm_test, effects = "estimated_income:Top_Charge_Arraign_Ordinal"))
+```
+
+### Generate all summary statistics
+```{r}
+summary(brm_test)
+```
+
+### Plot conditional effects of Charge Severity and Race
+```{r}
+plot(conditional_effects(brm_test, effects = "Top_Charge_Arraign_Ordinal:Race"))
+```
+
+### Plot all coefficients, standard deviations, and correlations
+```{r}
+plot(brm_test)
+```
+
+### Plot conditional effects of Age and Race
+```{r}
+plot(conditional_effects(brm_test, effects = "general_age:Race"))
+```
+
+### Plot conditional effects of July 2020 and Race
+```{r}
+plot(conditional_effects(brm_test, effects = "after_july_2020:Race"))
+```
+
+### Plot conditional effects of Prior Violent Felony Count
+```{r}
+plot(conditional_effects(brm_test, effects = "prior_vfo_cnt"))
+```
+
+### Plot conditional effects of Charge Severity
+```{r}
+plot(conditional_effects(brm_test, effects = "Top_Charge_Arraign_Ordinal"))
+```
+
+### Plot conditional effects of Race and Ethnicity
+```{r}
+plot(conditional_effects(brm_test, effects = "Race:Ethnicity"))
+```
+
+### Plot conditional effects of Ethnicity and July 2020
+```{r}
+plot(conditional_effects(brm_test, effects = "after_july_2020:Ethnicity"))
+```
+
+### Plot the 'leave-one-out'
+```{r}
+plot(loo(brm_test, k_threshold = 0.7), label_points = TRUE)
+```
+
+### Plot conditional effects of Charge Severity and Race
+```{r}
+plot(conditional_effects(brm_test, effects = "Top_Charge_Arraign_Ordinal:Race"))
+```

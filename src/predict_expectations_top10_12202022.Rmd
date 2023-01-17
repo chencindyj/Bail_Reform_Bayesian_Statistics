@@ -1,0 +1,234 @@
+---
+title: "predict_expectations_top10"
+output: html_document
+date: "2022-12-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Load Packages
+
+```{r cars}
+library(brms)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+```
+
+
+### Preprocessing: Create the subset with 10 judges
+
+```{r}
+# load data set
+setwd(dirname(rstudioapi::getActiveDocumentContext()[["path"]]))
+path_i = "." #input data path
+final_data <- read.csv(paste0(path_i, "/final_data.csv"))
+
+# convert ordinal variable into ordered factor
+final_data$Top_Charge_Arraign_Ordinal <- ordered(factor(final_data$Top_Charge_Arraign_Ordinal,
+                                                levels = c(1, 2, 3, 4, 5, 6, 7, 8)))
+
+
+# add in ACS income data
+income_data <- read.csv(paste0(path_i, "/clean_acs_data.csv"), na.strings = "-")
+income_data <- income_data %>%
+  mutate(clean_county = str_extract(County, "^(\\w+)")) %>%
+  mutate(clean_county = ifelse(clean_county == "New", "New York",
+                               ifelse(clean_county == "St", "St. Lawrence", clean_county)),
+         race_black = as.integer(race_black))
+
+gender_data <- read.csv(paste0(path_i, "/gender_split.csv"), na.strings = "-")
+gender_data <- gender_data %>%
+  mutate(female_index = Female / Male) %>%
+  select(County, female_index)
+
+merged_data <- final_data %>% left_join(income_data,
+                         by = c("County_Name" = "clean_county")) %>%
+  select(-County, -Metric) %>%
+  left_join(gender_data, by = c("County_Name" = "County")) %>%
+  filter(Race == "White" | Race == "Black") %>%
+  mutate(estimated_income = case_when(
+    Race == "White" ~ race_white,
+    Race == "Black" ~ race_black) * case_when(Ethnicity == "Hispanic" ~ hispanic_index,
+                                              Ethnicity == "Non Hispanic" ~ non_hispanic_white_index) *
+      case_when(general_age <= 24 ~ age_group_15_24,
+                general_age >= 25 & general_age <= 44 ~ age_group_25_44,
+                general_age >= 45 & general_age <= 64 ~ age_group_45_64,
+                general_age >= 65 ~ age_group_65_plus) * 0.59 *
+      case_when(Gender == "Female" ~ female_index,
+                Gender == "Male" ~ 1), 
+    censored = ifelse(Disposition_Date == "NULL", 0, 1),
+    estimated_income = log(estimated_income),
+    after_july_2020 = as.factor(after_july_2020),
+    bail_amt = log(bail_amt),
+    Judge_Name = as.factor(Judge_Name),
+    # divide age so we scale better
+    general_age = general_age/10) %>%
+  mutate(Race = factor(Race, levels = c("White", "Black")),
+         Gender = as.factor(Gender))
+
+
+judge_list <- merged_data %>%
+  group_by(Judge_Name) %>%
+  count() %>%
+  rename(case_count = n) %>%
+  filter(case_count > 300) %>%
+  select(Judge_Name)
+
+# make a subset to test
+merged_data_test <- merged_data %>% inner_join(judge_list, by = "Judge_Name")
+```
+
+
+# Create the expectation predictions subset
+```{r}
+pred_subset <- posterior_epred(brm_test, newdata = merged_data_test)
+pred_subset_df <- data.frame(colMeans(pred_subset))
+predictions <- cbind(merged_data_test, pred_subset_df)
+```
+
+# Plot all expectations
+```{r plot_fun3}
+
+ggplot(data = predictions, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_wrap(~Judge_Name) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail by Race for Top 10 Judges") +
+  theme(legend.position = "bottom") +
+  theme_bw()
+```
+
+```{r plot_charge_severity_races}
+
+ggplot(data = predictions, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_grid(rows = vars(Top_Charge_Arraign_Ordinal)) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail by Race &\nCharge Severity for Top 10 Judges") +
+  theme(legend.position = "bottom") +
+  theme_classic()
+```
+
+```{r plot_fun_afterjuly}
+ggplot(data = predictions, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color =  after_july_2020)) +
+  facet_grid(vars(Race), vars(Judge_Name)) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail for Top 10 Judges after July 2020 Reform") +
+  theme(legend.position = "bottom")
+```
+
+```{r plot_fun_nonvfo}
+
+ggplot(data = predictions, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_grid(cols = vars(prior_nonvfo_cnt)) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail for Top 10 Judges by Non-Violent Felony Count") +
+  theme(legend.position = "bottom")
+```
+
+```{r plot_fun_misd}
+ggplot(data = predictions, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_wrap(~prior_misd_cnt) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail for Top 10 Judges by Misdemeanor Count") +
+  theme(legend.position = "bottom")
+```
+
+```{r plot_income}
+
+predictions2 <- predictions %>% mutate(income_bracket = case_when(estimated_income <= 10.22 ~ "<= 10.22 (Poverty Line)",
+                                                                estimated_income > 10.22 ~ "10.22+"))
+
+ggplot(data = predictions2, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_grid(~income_bracket) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail by Race & Estimated Income for Top 10 Judges") +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+# counts for the income bracket
+predictions2 %>% group_by(income_bracket) %>% count()
+```
+
+```{r}
+# isolate the 2 judges and recreate certain charts
+
+predictions_inexperienced <- predictions %>% filter(Judge_Name == "Office, Clerk's" | Judge_Name == "Judge/JHO/Hearing Examiner, Visiting")
+
+ggplot(data = predictions_inexperienced, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_grid(rows = vars(Top_Charge_Arraign_Ordinal)) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail by Race &\nCharge Severity for Inexperienced Judges") +
+  theme(legend.position = "bottom") +
+  theme_classic()
+```
+
+```{r inexp_nonvfo}
+ggplot(data = predictions_inexperienced, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_grid(cols = vars(prior_nonvfo_cnt)) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail for Inexperienced Judges by Non-Violent Felony Count") +
+  theme(legend.position = "bottom")
+```
+
+```{r inexp_vfo}
+ggplot(data = predictions_inexperienced, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_grid(rows = vars(prior_vfo_cnt)) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail for Inexperienced Judges\nby Violent Felony Count") +
+  theme(legend.position = "bottom")
+```
+
+```{r inexp_misd}
+ggplot(data = predictions, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_wrap(~prior_misd_cnt) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail for Inexperienced Judges by Misdemeanor Count") +
+  theme(legend.position = "bottom")
+```
+
+
+```{r inexp_income}
+predictions_inexperienced <- predictions_inexperienced %>% mutate(income_bracket = case_when(estimated_income <= 10.22 ~ "<= 10.22 (Poverty Line)",
+                                                                estimated_income > 10.22 ~ "10.22+"))
+
+ggplot(data = predictions_inexperienced, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_grid(~income_bracket) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail by Race & Estimated Income for Inexperienced Judges") +
+  theme(legend.position = "bottom")
+```
+
+```{r inexp_july2020}
+ggplot(data = predictions_inexperienced, aes(y = colMeans.pred_subset.)) +
+  geom_density(aes(color = Race)) +
+  facet_grid(~after_july_2020) +
+  coord_flip() +
+  labs(y = "Expected Bail Amount",
+       title = "Density of Expected Bail by Race for Inexperienced Judges after July 2020") +
+  theme(legend.position = "bottom")
+```

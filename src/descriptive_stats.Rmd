@@ -1,0 +1,173 @@
+---
+title: "descriptive_stats"
+author: "Cindy Chen, cjc2279"
+date: '2022-10-30'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(viridis)
+library(scales)
+library(moments)
+```
+
+### Preprocess data
+```{r wrangling}
+# load data set
+setwd(dirname(rstudioapi::getActiveDocumentContext()[["path"]]))
+path_i = "." #input data path
+final_data <- read.csv(paste0(path_i, "/final_data.csv"))
+
+# convert ordinal variable into ordered factor
+final_data$Top_Charge_Arraign_Ordinal <- factor(final_data$Top_Charge_Arraign_Ordinal,
+                                                levels = c(1, 2, 3, 4, 5, 6, 7, 8))
+
+# add in ACS income data
+income_data <- read.csv(paste0(path_i, "/clean_acs_data.csv"), na.strings = "-")
+income_data <- income_data %>%
+  mutate(clean_county = str_extract(County, "^(\\w+)")) %>%
+  mutate(clean_county = ifelse(clean_county == "New", "New York",
+                               ifelse(clean_county == "St", "St. Lawrence", clean_county)),
+         race_black = as.integer(race_black))
+
+
+gender_data <- read.csv(paste0(path_i, "/gender_split.csv"), na.strings = "-")
+gender_data <- gender_data %>%
+  mutate(female_index = Female / Male) %>%
+  select(County, female_index)
+
+merged_data <- final_data %>% left_join(income_data,
+                         by = c("County_Name" = "clean_county")) %>%
+  select(-County, -Metric) %>%
+  left_join(gender_data, by = c("County_Name" = "County")) %>%
+  filter(Race == "White" | Race == "Black") %>%
+   mutate(estimated_income = case_when(
+    Race == "White" ~ race_white,
+    Race == "Black" ~ race_black) * case_when(Ethnicity == "Hispanic" ~ hispanic_index,
+                                              Ethnicity == "Non Hispanic" ~ non_hispanic_white_index) *
+      case_when(general_age <= 24 ~ age_group_15_24,
+                general_age >= 25 & general_age <= 44 ~ age_group_25_44,
+                general_age >= 45 & general_age <= 64 ~ age_group_45_64,
+                general_age >= 65 ~ age_group_65_plus) * 0.59 *
+      case_when(Gender == "Female" ~ female_index,
+                Gender == "Male" ~ 1))
+
+```
+
+## Run frequency counts
+
+```{r}
+merged_data %>% group_by(Race, Ethnicity, Gender) %>% count()
+```
+
+
+```{r}
+library(moments)
+merged_data %>% group_by(Race) %>% na.omit(estimated_income) %>% summarize(max =max(estimated_income),
+                                                                           min = min(estimated_income),
+                                                                           standard_dev = sd(estimated_income),
+                                                                           kurtosis = kurtosis(estimated_income),
+                                                                           skewness = skewness(estimated_income))
+```
+
+```{r}
+merged_data %>% filter(Race == "White") %>% summary()
+```
+
+
+```{r}
+merged_data %>% group_by(Race) %>% summarize(standard_dev = sd(general_age),
+                                                                           kurtosis = kurtosis(general_age),
+                                                                           skewness = skewness(general_age))
+```
+
+```{r}
+merged_data %>% group_by(Race) %>% summarize(standard_dev = sd(bail_amt),
+                                                                           kurtosis = kurtosis(bail_amt),
+                                                                           skewness = skewness(bail_amt))
+```
+
+
+```{r}
+merged_data %>% group_by(Top_Charge_Arraign_Ordinal) %>% summarize(mean = mean(bail_amt),
+                                                                   median = median(bail_amt),
+                                                                   max = max(bail_amt),
+                                                                   min = min(bail_amt),
+                                                                   stdev = sd(bail_amt),
+                                                                   kurtosis = kurtosis(bail_amt),
+                                                                   skewness = skewness(bail_amt))
+
+```
+
+## Create histograms
+
+```{r histogram1}
+library(patchwork)
+
+hist1 <- final_data %>%
+  filter(bail_amt <= 200000) %>%
+  ggplot(aes(x = bail_amt)) +
+  geom_histogram() +
+  theme_classic() +
+  labs(x = "Bail Amount",
+       y = "Frequency",
+       title = "Histogram of Bail Amounts up to $200K")
+
+hist2 <- final_data %>%
+  filter(bail_amt <= 50000) %>%
+  ggplot(aes(x = bail_amt)) +
+  geom_histogram() +
+  theme_classic() +
+  labs(x = "Bail Amount",
+       y = "Frequency",
+       title = "Histogram of Bail Amounts up to $50K")
+
+(hist1 | hist2)
+
+```
+
+## Create boxplots
+
+```{r boxplots}
+# box plot for bail amounts below or equal to $2MM
+final_data %>%
+  filter(bail_amt <= 2000000) %>%
+  ggplot() +
+  geom_boxplot(aes(x = Top_Charge_Arraign_Ordinal,
+                   y = bail_amt,
+                   group = Top_Charge_Arraign_Ordinal,
+                   fill = Top_Charge_Arraign_Ordinal)) +
+  scale_fill_viridis(direction = -1, discrete = TRUE) +
+  theme_bw() +
+  theme(legend.position = "None") +
+  labs(y = "Bail Amount ($)",
+       x = "Charge Severity (highest = 1)",
+       title = "Distribution of Bail Amounts ($2MM and under)") +
+  scale_y_continuous(labels = comma) +
+  coord_flip()
+  
+```
+
+```{r boxplot2}
+# box plot with only the largest outlier removed
+final_data %>%
+  filter(bail_amt < 150000000) %>%
+  ggplot() +
+  geom_boxplot(aes(x = Top_Charge_Arraign_Ordinal,
+                   y = bail_amt,
+                   group = Top_Charge_Arraign_Ordinal,
+                   fill = Top_Charge_Arraign_Ordinal)) +
+  scale_fill_viridis(direction = -1, discrete = TRUE) +
+  theme_bw() +
+  theme(legend.position = "None") +
+  labs(y = "Bail Amount ($)",
+       x = "Charge Severity (highest = 1)",
+       title = "Distribution of Bail Amounts under $150MM") +
+  scale_y_continuous(labels = comma) +
+  coord_flip()
+```
+  
