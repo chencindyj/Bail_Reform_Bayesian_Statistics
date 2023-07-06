@@ -9,8 +9,12 @@ New York is the only state in America that requires judges to set bail exclusive
 ## Data
 The raw data for this project can be found here: https://ww2.nycourts.gov/pretrial-release-data-33136
 
+## What's Shared on Github
+The code for cleaning and analyzing the data can be found in the /src folder
+The visualization outputs can be found in the /outputs folder
+
 ## Want the Full Report?
-Please message me on LinkedIn if you would like to read the full thesis report.
+Please message me on LinkedIn if you would like to read the full thesis with full methodology, assumptions, and results.
 
 ## Sample Findings
 <img src="https://github.com/chencindyj/Bail_Reform_Bayesian_Statistics/blob/main/outputs/cond_effects_race_income.png"/>
